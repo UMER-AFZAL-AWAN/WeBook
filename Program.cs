@@ -1,314 +1,238 @@
 ﻿using OpenQA.Selenium;
-using OpenQA.Selenium.Chrome;
-using OpenQA.Selenium.Support.UI;
 using System;
-using System.Collections.Generic;
-using System.IO;
-using System.Linq;
 using System.Threading;
+using WeBook.Config;
+using WeBook.Helpers;
+using WeBook.Services;
 
 namespace WeBook
 {
     internal class Program
     {
-        // ---------------- CONFIG ----------------
-        static string EMAIL = "cabnipcar@bangban.uk";
-        static string PASSWORD = "Aa@123456789";
-        static string URL = "https://webook.com/en/events/rsl-al-khaleej-vs-al-hilal-387468/book";
-
-        // Section Color (initial guess)
-        static int R = 139, G = 195, B = 74;
-
         static void Main(string[] args)
         {
-            var options = new ChromeOptions();
-            options.AddArgument("--start-maximized");
+            Logger.Separator();
+            Logger.Info("WeBook Seat Selection Bot Starting");
+            Logger.Separator();
 
-            Logger.Log("Starting browser...");
-
-            var driver = new ChromeDriver(options);
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(20));
-
-            try
+            // Verify URL before starting
+            if (!IsValidUrl(AppConfig.Url))
             {
-                Logger.Log($"Opening URL: {URL}");
-                driver.Navigate().GoToUrl(URL);
+                Logger.Error("Invalid URL in configuration. Please check AppConfig.cs");
+                Logger.Info($"Current URL: {AppConfig.Url}");
+                Logger.Info("Press any key to exit...");
+                Console.ReadKey();
+                return;
+            }
 
-                HandleCookies(driver);
+            using (var webDriver = new WebDriverService())
+            {
+                var driver = webDriver.Driver;
 
-                // ---------------- LOGIN ----------------
+                // Initialize services
+                var navigation = new NavigationService(driver);
+                var login = new LoginService(driver);
+                var frameManager = new FrameManager(driver);
+                var seatSelector = new SeatSelectionService(driver);
+
                 try
                 {
-                    Logger.Log("Attempting login...");
+                    // Step 1: Navigate to URL
+                    Logger.Step("Step 1: Navigate to Event Page");
+                    bool navigated = webDriver.NavigateToUrl(AppConfig.Url);
 
-                    var email = wait.Until(d => d.FindElement(By.CssSelector("[data-testid='auth_login_email_input']")));
-                    email.SendKeys(EMAIL);
-
-                    driver.FindElement(By.CssSelector("[data-testid='auth_login_password_input']"))
-                          .SendKeys(PASSWORD);
-
-                    driver.FindElement(By.CssSelector("[data-testid='auth_login_submit_button']")).Click();
-
-                    Logger.Log("Login submitted (handle CAPTCHA manually)");
-                }
-                catch (Exception ex)
-                {
-                    Logger.Log("Login skipped");
-                    Logger.LogError(ex);
-                }
-
-                // ---------------- WAIT FOR MAP ----------------
-                Logger.Log("Waiting for stadium map...");
-                bool mapReady = false;
-
-                for (int attempt = 0; attempt < 25; attempt++)
-                {
-                    Logger.Log($"Map attempt: {attempt}");
-
-                    driver.SwitchTo().DefaultContent();
-                    var iframes = driver.FindElements(By.TagName("iframe"));
-                    Logger.Log($"Found {iframes.Count} iframes");
-
-                    foreach (var frame in iframes)
+                    if (!navigated)
                     {
-                        try
-                        {
-                            driver.SwitchTo().Frame(frame);
-
-                            if (ScanCanvas(driver, R, G, B, false, false))
-                            {
-                                Logger.Log("Canvas detected");
-                                mapReady = true;
-                                break;
-                            }
-                        }
-                        catch (Exception ex)
-                        {
-                            Logger.LogError(ex);
-                        }
-
-                        driver.SwitchTo().DefaultContent();
+                        Logger.Error("Failed to navigate to URL");
+                        return;
                     }
 
-                    if (mapReady) break;
-                    Thread.Sleep(1000);
-                }
+                    // Wait for initial page load
+                    Logger.Info("Waiting for page to load...");
+                    Thread.Sleep(AppConfig.MediumDelay * 4);
 
-                if (!mapReady)
-                {
-                    Logger.Log("Map not found. Exiting.");
-                    return;
-                }
+                    // Step 2: Handle Cookies
+                    Logger.Step("Step 2: Handle Cookies");
+                    navigation.HandleCookies();
 
-                // ---------------- CLICK SECTION ----------------
-                Logger.Log("Clicking section...");
-                ScanCanvas(driver, R, G, B, true, false);
-                Thread.Sleep(4000);
+                    // Step 3: Login
+                    Logger.Step("Step 3: Login");
+                    login.Login(AppConfig.Email, AppConfig.Password);
 
-                // ---------------- RE-DETECT IFRAME ----------------
-                Logger.Log("Re-detecting iframe after section click...");
-                driver.SwitchTo().DefaultContent();
+                    // Wait after login for page to stabilize
+                    Logger.Info("Waiting for page after login...");
+                    Thread.Sleep(AppConfig.ExtraLongDelay);
 
-                var framesAfter = driver.FindElements(By.TagName("iframe"));
-                foreach (var frame in framesAfter)
-                {
-                    try
+                    // Step 4: Find Map Frame (with proper waiting)
+                    Logger.Step("Step 4: Find Stadium Map");
+
+                    // Wait for the page to be fully rendered after login
+                    Logger.Info("Waiting for stadium map to load...");
+                    Thread.Sleep(AppConfig.LongDelay * 2);
+
+                    if (!frameManager.FindMapFrame())
                     {
-                        driver.SwitchTo().Frame(frame);
+                        Logger.Error("Cannot proceed without map");
+                        return;
+                    }
 
-                        if (driver.FindElements(By.TagName("canvas")).Count > 0)
+                    // Extra wait after finding map
+                    Thread.Sleep(AppConfig.MediumDelay * 2);
+
+                    // Step 5: Click Available Section
+                    Logger.Step("Step 5: Click Available Section");
+                    bool sectionClicked = false;
+                    for (int attempt = 0; attempt < 10; attempt++)
+                    {
+                        frameManager.EnterMapFrame();
+
+                        // Wait for canvas to be interactive
+                        Thread.Sleep(1000);
+
+                        sectionClicked = seatSelector.ClickSection(
+                            AppConfig.AvailableColor[0],
+                            AppConfig.AvailableColor[1],
+                            AppConfig.AvailableColor[2]
+                        );
+
+                        if (sectionClicked)
                         {
-                            Logger.Log("New canvas found");
+                            Logger.Success("Section clicked successfully!");
                             break;
                         }
 
-                        driver.SwitchTo().DefaultContent();
+                        Logger.Warning($"Section click attempt {attempt + 1} failed, retrying...");
+                        Thread.Sleep(AppConfig.LongDelay);
                     }
-                    catch { }
-                }
 
-                // ---------------- SELECT SEATS ----------------
-                Logger.Log("Selecting seats...");
-                int seats = 0;
-
-                for (int i = 0; i < 15; i++)
-                {
-                    bool result = ScanCanvas(driver, R, G, B, true, true);
-                    Logger.Log($"Seat attempt {i}: {result}");
-
-                    if (result)
+                    if (!sectionClicked)
                     {
-                        seats++;
-                        Logger.Log($"Seats selected: {seats}");
-                        Thread.Sleep(700);
+                        Logger.Error("Could not click any section");
+                        return;
                     }
 
-                    if (seats >= 4) break;
+                    // Step 6: Wait for Seats to Load
+                    Logger.Step("Step 6: Wait for Seat Grid");
+                    Logger.Info("Waiting for seat selection to load...");
+
+                    // Wait for the seat grid to appear after section click
+                    Thread.Sleep(AppConfig.ExtraLongDelay);
+
+                    // Additional wait for canvas to redraw with seats
+                    frameManager.EnterMapFrame();
+                    Thread.Sleep(AppConfig.LongDelay);
+
+                    // Step 7: Select Seats
+                    Logger.Step("Step 7: Select Seats");
+                    seatSelector.ResetClickedPositions();
+
+                    int seatsSelected = 0;
+                    int failedAttempts = 0;
+                    int maxAttempts = 25;
+
+                    while (seatsSelected < AppConfig.MaxSeats && failedAttempts < maxAttempts)
+                    {
+                        frameManager.EnterMapFrame();
+
+                        // Wait a bit before each seat click
+                        Thread.Sleep(800);
+
+                        bool seatClicked = seatSelector.ClickSeat(
+                            AppConfig.AvailableColor[0],
+                            AppConfig.AvailableColor[1],
+                            AppConfig.AvailableColor[2]
+                        );
+
+                        if (seatClicked)
+                        {
+                            Logger.Debug("Waiting for popup...");
+                            Thread.Sleep(AppConfig.MediumDelay);
+
+                            frameManager.ExitToMainContent();
+
+                            // Wait for popup to appear
+                            Logger.Debug("Checking for quantity popup...");
+                            Thread.Sleep(500);
+
+                            bool popupHandled = seatSelector.HandleQuantityPopup(AppConfig.MaxSeats - seatsSelected);
+
+                            if (popupHandled)
+                            {
+                                seatsSelected++;
+                                failedAttempts = 0;
+                                Logger.Success($"Seat {seatsSelected}/{AppConfig.MaxSeats} selected");
+                                Thread.Sleep(AppConfig.MediumDelay * 2);
+                            }
+                            else
+                            {
+                                Logger.Warning("Popup not handled, retrying...");
+                                failedAttempts++;
+                            }
+                        }
+                        else
+                        {
+                            failedAttempts++;
+                            Logger.Debug($"No seat found (attempt {failedAttempts}/{maxAttempts})");
+
+                            // Scroll occasionally
+                            if (failedAttempts % 3 == 0)
+                            {
+                                frameManager.EnterMapFrame();
+                                ((IJavaScriptExecutor)driver).ExecuteScript("window.scrollBy(0, 250);");
+                                Logger.Debug("Scrolled to find more seats");
+                                Thread.Sleep(AppConfig.MediumDelay);
+                            }
+                        }
+
+                        Thread.Sleep(AppConfig.ShortDelay);
+                    }
+
+                    // Step 8: Check Results
+                    Logger.Step("Step 8: Check Results");
+                    if (seatsSelected == 0)
+                    {
+                        Logger.Error("No seats were selected!");
+                        return;
+                    }
+
+                    Logger.Success($"Successfully selected {seatsSelected} out of {AppConfig.MaxSeats} seats!");
+
+                    // Step 9: Checkout
+                    Logger.Step("Step 9: Proceed to Checkout");
+                    frameManager.ExitToMainContent();
+
+                    // Wait for checkout button to be ready
+                    Thread.Sleep(AppConfig.LongDelay);
+                    seatSelector.ProceedToCheckout();
+
+                    Logger.Separator();
+                    Logger.Success("✨ Process completed!");
+                    Logger.Info("Browser will close in 60 seconds...");
+                    Logger.Separator();
                 }
-
-                // ---------------- CHECKOUT ----------------
-                driver.SwitchTo().DefaultContent();
-                Logger.Log("Searching checkout button...");
-
-                var checkout = wait.Until(d =>
-                    d.FindElements(By.XPath("//button[contains(., 'Checkout') or contains(., 'Next')]"))
-                     .FirstOrDefault(e => e.Displayed && e.Enabled)
-                );
-
-                if (checkout != null)
+                catch (Exception ex)
                 {
-                    Logger.Log("Checkout found");
-                    ((IJavaScriptExecutor)driver).ExecuteScript(
-                        "arguments[0].scrollIntoView(true); arguments[0].click();", checkout);
+                    Logger.Error($"Unexpected error: {ex.Message}");
+                    Logger.Debug($"Stack trace: {ex.StackTrace}");
                 }
-                else
+                finally
                 {
-                    Logger.Log("Checkout NOT found");
+                    Thread.Sleep(60000);
                 }
-
-                // ---------------- TERMS ----------------
-                Logger.Log("Clicking terms...");
-                var terms = wait.Until(d => d.FindElement(By.CssSelector("input[type='checkbox']")));
-                ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].click();", terms);
-
-                Logger.Log("DONE - proceed manually");
-            }
-            catch (Exception ex)
-            {
-                Logger.LogError(ex);
-            }
-            finally
-            {
-                Logger.Log("Waiting before exit...");
-                Thread.Sleep(60000);
-                driver.Quit();
             }
         }
 
-        // ---------------- CANVAS SCAN ----------------
-        static bool ScanCanvas(IWebDriver driver, int r, int g, int b, bool click, bool spread)
+        static bool IsValidUrl(string url)
         {
-            Logger.Log($"ScanCanvas | click={click} spread={spread}");
-
-            string script = @"
-                var canvas = document.querySelector('canvas');
-                if (!canvas) return { found:false };
-
-                var ctx = canvas.getContext('2d', { willReadFrequently: true });
-                var data = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-
-                var hits = [];
-
-                for (var i = 0; i < data.length; i += 4) {
-
-                    var rr = data[i];
-                    var gg = data[i+1];
-                    var bb = data[i+2];
-
-                    if (Math.abs(rr-arguments[0])<20 &&
-                        Math.abs(gg-arguments[1])<20 &&
-                        Math.abs(bb-arguments[2])<20) {
-
-                        var x = (i/4) % canvas.width;
-                        var y = Math.floor((i/4) / canvas.width);
-
-                        // IGNORE TOP AREA
-                        if (y < canvas.height * 0.2) continue;
-
-                        hits.push({x:x, y:y, r:rr, g:gg, b:bb});
-
-                        if (hits.length >= 30) break;
-                    }
-                }
-
-                if (hits.length === 0) return { found:false };
-
-                var pick = hits[Math.floor(Math.random() * hits.length)];
-
-                if (!arguments[3]) return pick;
-
-                var rect = canvas.getBoundingClientRect();
-
-                function fire(cx, cy) {
-                    var ev = new MouseEvent('click', {
-                        view: window,
-                        bubbles: true,
-                        clientX: rect.left + cx,
-                        clientY: rect.top + cy
-                    });
-                    canvas.dispatchEvent(ev);
-                }
-
-                fire(pick.x, pick.y);
-
-                if (arguments[4]) {
-                    fire(pick.x+5, pick.y);
-                    fire(pick.x-5, pick.y);
-                    fire(pick.x, pick.y+5);
-                }
-
-                return pick;
-            ";
-
-            var result = (Dictionary<string, object>)
-                ((IJavaScriptExecutor)driver).ExecuteScript(script, r, g, b, click, spread);
-
-            if (!(bool)result["found"])
-            {
-                Logger.Log("Canvas NOT found");
+            if (string.IsNullOrWhiteSpace(url))
                 return false;
-            }
 
-            Logger.Log($"HIT -> X:{result["x"]} Y:{result["y"]} RGB:{result["r"]},{result["g"]},{result["b"]}");
+            if (!Uri.IsWellFormedUriString(url, UriKind.Absolute))
+                return false;
 
-            Thread.Sleep(200);
-            return true;
-        }
-
-        // ---------------- COOKIES ----------------
-        static void HandleCookies(IWebDriver driver)
-        {
-            try
-            {
-                Logger.Log("Checking cookies...");
-
-                var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(5));
-
-                var btn = wait.Until(d =>
-                    d.FindElements(By.XPath("//button[contains(., 'Accept')]"))
-                     .FirstOrDefault(e => e.Displayed)
-                );
-
-                if (btn != null)
-                {
-                    ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].click();", btn);
-                    Logger.Log("Cookies accepted");
-                }
-            }
-            catch (Exception ex)
-            {
-                Logger.Log("No cookies popup");
-                Logger.LogError(ex);
-            }
+            Uri uriResult;
+            bool result = Uri.TryCreate(url, UriKind.Absolute, out uriResult);
+            return result && (uriResult.Scheme == Uri.UriSchemeHttp || uriResult.Scheme == Uri.UriSchemeHttps);
         }
     }
-
-    // ---------------- LOGGER ----------------
-    //static class Logger
-    //{
-    //    private static readonly string FilePath = "webook_log.txt";
-
-    //    public static void Log(string msg)
-    //    {
-    //        string line = $"[{DateTime.Now:HH:mm:ss}] {msg}";
-    //        Console.WriteLine(line);
-    //        File.AppendAllText(FilePath, line + Environment.NewLine);
-    //    }
-
-    //    public static void LogError(Exception ex)
-    //    {
-    //        Log("ERROR: " + ex.Message);
-    //        Log("STACK: " + ex.StackTrace);
-    //    }
-    //}
 }
