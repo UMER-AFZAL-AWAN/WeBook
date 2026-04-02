@@ -59,5 +59,20 @@ namespace WeBook.Services
                 Logger.Log("ℹ️ Note: Team selection check skipped: " + ex.Message);
             }
         }
+
+        public static void ClickCheckout(IWebDriver driver)
+        {
+            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
+            try
+            {
+                // WeBook checkout buttons usually use a 'primary' class or a specific data-testid
+                var checkoutBtn = wait.Until(d => d.FindElement(By.CssSelector("button[class*='bg-primary'], button[data-testid='checkout-button']")));
+
+                ((IJavaScriptExecutor)driver).ExecuteScript("arguments[0].scrollIntoView(true);", checkoutBtn);
+                checkoutBtn.Click();
+                Logger.Log("✅ Checkout clicked. Moving to payment/summary...");
+            }
+            catch (Exception ex) { Logger.Log("❌ Could not find checkout button: " + ex.Message); }
+        }
     }
 }

@@ -1,8 +1,9 @@
 ﻿using OpenQA.Selenium;
 using OpenQA.Selenium.Support.UI;
 using System;
-using WeBook.Models;
+using System.Linq;
 using System.Threading;
+using WeBook.Models;
 using WeBook.Utilities;
 
 namespace WeBook.Services
@@ -13,8 +14,6 @@ namespace WeBook.Services
         {
             try
             {
-                // 1. Wait for the email field to be 'Visible' and 'Enabled'
-                // This bypasses issues where the element exists in HTML but isn't ready for input
                 var emailField = wait.Until(d => {
                     var el = d.FindElement(By.CssSelector("input[data-testid='auth_login_email_input']"));
                     return (el.Displayed && el.Enabled) ? el : null;
@@ -32,7 +31,6 @@ namespace WeBook.Services
                 var submitBtn = driver.FindElement(By.CssSelector("button[data-testid='auth_login_submit_button']"));
                 submitBtn.Click();
 
-                // 2. Professional Wait: Wait for the login overlay to actually DISAPPEAR
                 wait.Until(SeleniumExtras.WaitHelpers.ExpectedConditions.InvisibilityOfElementLocated(
                     By.CssSelector("button[data-testid='auth_login_submit_button']")));
 
@@ -48,38 +46,41 @@ namespace WeBook.Services
         {
             try
             {
-                // 1. Give the page a generous 5 seconds to load the security widget
-                Logger.Log("Security page detected. Polling for verification widget...");
-                Thread.Sleep(20000);
+                var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(5));
 
-                // 2. Look for ANY iframe that might be Cloudflare without crashing if missing
-                var iframes = driver.FindElements(By.XPath("//iframe[contains(@src, 'cloudflare') or contains(@title, 'Cloudflare')]"));
+                // Flexible search for the Cloudflare iframe
+                var cfFrame = driver.FindElements(By.XPath("//iframe[contains(@src, 'cloudflare')]")).FirstOrDefault();
 
-                if (iframes.Count > 0)
+                if (cfFrame != null)
                 {
-                    driver.SwitchTo().Frame(iframes[0]);
-                    Logger.Log("Switched to Security Frame.");
+                    Logger.Log("Cloudflare iframe found. Attempting switch...");
+                    driver.SwitchTo().Frame(cfFrame);
 
-                    // Try to find the checkbox, but only wait 5 seconds
-                    var shortWait = new WebDriverWait(driver, TimeSpan.FromSeconds(20));
-                    var checkbox = shortWait.Until(d => d.FindElement(By.CssSelector("input[type='checkbox'], .cb-i, #challenge-stage")));
+                    // Attempt to click the checkbox if visible
+                    try
+                    {
+                        var checkbox = driver.FindElements(By.CssSelector("input[type='checkbox'], #challenge-stage")).FirstOrDefault();
+                        checkbox?.Click();
+                        Logger.Log("✅ Verification clicked.");
+                    }
+                    catch { /* Fail silently inside frame */ }
 
-                    checkbox.Click();
-                    Logger.Log("✅ Verification clicked.");
-
-                    // Return to the main page
                     driver.SwitchTo().DefaultContent();
                 }
                 else
                 {
-                    Logger.Log("ℹ️ No Cloudflare iframe found. It may have cleared automatically or requires manual click.");
+                    Logger.Log("ℹ️ No Cloudflare iframe active. Checking for Turnstile text...");
+                    if (driver.PageSource.Contains("Quick security check") || driver.PageSource.Contains("Verify you are human"))
+                    {
+                        Logger.Log("⚠️ Security check detected. Waiting 5s for auto-resolve...");
+                        Thread.Sleep(5000);
+                    }
                 }
             }
-            catch (Exception ex)
+            catch (Exception)
             {
-                // If anything goes wrong, we ALWAYS go back to default content and let the script continue
                 driver.SwitchTo().DefaultContent();
-                Logger.Log("ℹ️ Security step bypassed (Manual intervention might be needed): " + ex.Message);
+                Logger.Log("ℹ️ Cloudflare check bypassed.");
             }
         }
     }

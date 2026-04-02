@@ -35,68 +35,64 @@ namespace WeBook.Services
 
         public static List<SeatRequest> GetAllEnclosures(IWebDriver driver)
         {
-            var uniqueEnclosures = new Dictionary<string, SeatRequest>();
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(15));
+            var uniqueEnclosures = new Dictionary<string, SeatRequest>(StringComparer.OrdinalIgnoreCase);
+            IJavaScriptExecutor js = (IJavaScriptExecutor)driver;
+            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
 
             try
             {
-                var scrollContainer = wait.Until(d => d.FindElement(By.CssSelector("div[class*='overflow-y-auto'], .custom-scrollbar, [data-testid='enclosure-list']")));
+                // Target the specific scroll container found in your HTML
+                var scrollContainer = wait.Until(d => d.FindElement(By.CssSelector("div.mini-scrollbar")));
 
-                IJavaScriptExecutor js = (IJavaScriptExecutor)driver;
+                int previousCount = -1;
+                int stallCount = 0;
 
-                Logger.Log("Starting professional deep-scan of 200+ enclosures...");
-
-                int scrollAttempts = 0;
-                int maxScrolls = 100; // Increased for 200+ items
-
-                for (int i = 0; i < maxScrolls; i++)
+                // Keep scrolling until no new sections are found for 5 consecutive attempts
+                while (stallCount < 5)
                 {
-                    var visibleRows = driver.FindElements(By.CssSelector("div.flex.items-center.gap-1\\.5, button[class*='cursor-pointer']"));
-                    int countBefore = uniqueEnclosures.Count;
+                    // Select all list items (li) inside the scrollable area
+                    var listItems = scrollContainer.FindElements(By.CssSelector("li.py-2"));
 
-                    foreach (var row in visibleRows)
+                    foreach (var li in listItems)
                     {
                         try
                         {
-                            string rawText = row.Text;
-                            if (string.IsNullOrWhiteSpace(rawText)) continue;
+                            // Extract Label (e.g., S4, G1, B1)
+                            string label = li.FindElement(By.CssSelector("div.grow.text-sm p")).Text.Trim();
 
-                            string[] parts = rawText.Split('\n');
-                            string label = parts[0].Trim();
-                            string price = parts.Length > 1 ? parts.Last().Trim() : "";
+                            // Extract Price (e.g., 3,753.57)
+                            string priceText = li.FindElement(By.CssSelector("span.text-body-M")).Text.Trim();
 
-                            if (!string.IsNullOrEmpty(label) && !uniqueEnclosures.ContainsKey(label))
+                            if (!uniqueEnclosures.ContainsKey(label))
                             {
-                                uniqueEnclosures.Add(label, new SeatRequest { Section = label, Price = price });
+                                uniqueEnclosures.Add(label, new SeatRequest
+                                {
+                                    Section = label,
+                                    Price = priceText.Replace(",", "")
+                                });
                             }
                         }
-                        catch (StaleElementReferenceException) { continue; }
+                        catch { continue; } // Item might be mid-render, skip to next
                     }
 
-                    // Scroll down by the container height
-                    js.ExecuteScript("arguments[0].scrollTop += 800;", scrollContainer);
-                    Thread.Sleep(1200); // Give the slow connection time to fetch the next 20 sections
-
-                    // Check if we hit the bottom
-                    // The (bool?) and ?? false handles the "Unboxing" warning professionally
-                    object? scrollResult = js.ExecuteScript(
-                        "return (arguments[0].scrollTop + arguments[0].offsetHeight) >= (arguments[0].scrollHeight - 20);",
-                        scrollContainer);
-
-                    bool isAtBottom = (scrollResult as bool?) ?? false;
-
-                    if (isAtBottom && uniqueEnclosures.Count == countBefore)
+                    if (uniqueEnclosures.Count == previousCount)
                     {
-                        scrollAttempts++;
-                        if (scrollAttempts > 2) break;
+                        stallCount++;
                     }
-                }
+                    else
+                    {
+                        stallCount = 0;
+                        previousCount = uniqueEnclosures.Count;
+                    }
 
-                Logger.Log($"✅ Total Enclosures Captured: {uniqueEnclosures.Count}");
+                    // TRIGGER LAZY LOAD: Scroll down in 400px increments
+                    js.ExecuteScript("arguments[0].scrollBy(0, 400);", scrollContainer);
+                    Thread.Sleep(800); // Wait for the 'Cat' headers and items to load
+                }
             }
             catch (Exception ex)
             {
-                Logger.Log("⚠️ Error during deep scan: " + ex.Message);
+                Logger.Log("⚠️ Discovery Error: " + ex.Message);
             }
 
             return uniqueEnclosures.Values.ToList();

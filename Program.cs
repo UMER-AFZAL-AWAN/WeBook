@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using OpenQA.Selenium;
 using OpenQA.Selenium.Support.UI;
@@ -14,103 +15,63 @@ class Program
 {
     static void Main()
     {
-        var request = new SeatRequest
-        {
-            TargetUrl = string.Empty,
-            Quantity = 1
-        };
+        var request = new SeatRequest();
 
         request.TargetUrl = ConsoleInterface.GetUrl() ?? string.Empty;
+        request.Quantity = ConsoleInterface.GetSeatCount();
 
         IWebDriver driver = DriverFactory.Create();
-        
         WebDriverWait wait = new WebDriverWait(driver, TimeSpan.FromSeconds(45));
 
         try
         {
-            // 1. Go to the site
             Navigator.GoToEvent(driver, request.TargetUrl);
-
-            // 2. CRITICAL: Clear the cookie wall BEFORE doing anything else
             BookingService.HandleCookieBanner(driver);
-
-            // This uses the Config.EMAIL and Config.PASSWORD we fixed earlier
             AuthService.Login(driver, wait);
+            AuthService.SolveCloudflare(driver);
 
-            // Check if Cloudflare is blocking the view
-            if (driver.PageSource.Contains("cloudflare") || driver.PageSource.Contains("Verify you are human"))
-            {
-                AuthService.SolveCloudflare(driver);
-            }
+            Logger.Log("Waiting for stadium map elements...");
+            wait.Until(d => d.FindElements(By.CssSelector("button[class*='z-50']")).Count > 0);
 
-            // 2. NEW GATEKEEPER: Wait for the stadium UI element instead of the URL
-            Logger.Log("Waiting for stadium map elements to render...");
-
-            try
-            {
-                // Wait up to 60 seconds for the toggle button to appear
-                wait.Until(d => d.FindElements(By.CssSelector("button[class*='z-50'][class*='flex']")).Count > 0);
-                Logger.Log("✅ Stadium map detected!");
-            }
-            catch (WebDriverTimeoutException)
-            {
-                Logger.Log("❌ Timeout: Stadium elements not found. Please check the browser.");
-                throw; // Stop the script if we can't find the map
-            }
-
-            // Extraction
-            // 3. Now that the wall is gone, open the enclosure tab
+            // 4. SCAN - The new service handles the "12-item" bottleneck automatically
             DiscoveryService.EnsureEnclosureTabOpen(driver);
-
-            // 4. Get available sections and log them
-            // Trigger the deep-scan
             var availableSeats = DiscoveryService.GetAllEnclosures(driver);
 
-            // NEW: Mandatory pause to let the browser's JavaScript engine catch up 
-            // after processing 200+ DOM elements.
-            Thread.Sleep(3000);
+            Logger.Log($"✅ Discovery complete. {availableSeats.Count} total sections mapped across all categories.");
 
-            Logger.Log($"Scan complete. {availableSeats.Count} items in memory. Ready for next step.");
+            // 5. USER SELECTION
+            Console.Write("\n?? Enter Section Label (e.g., S7, B3, G12): ");
+            string input = Console.ReadLine()?.Trim() ?? string.Empty;
 
-            if (availableSeats.Count > 0)
+            var target = availableSeats.FirstOrDefault(s =>
+                s.Section.Equals(input, StringComparison.OrdinalIgnoreCase));
+
+            if (target != null)
             {
-                foreach (var seat in availableSeats)
+                Logger.Log($"🎯 Target Match: {target.Section} Found. Price: {target.Price} SAR.");
+
+                // 1. Force focus out of the list and onto the stadium
+                // Close the sidebar to prepare for clicking the map
+                try
                 {
-                    Logger.Log($"[LISTED] {seat.Section} - {seat.Price}");
+                    IJavaScriptExecutor js = (IJavaScriptExecutor)driver;
+                    js.ExecuteScript("document.querySelector('canvas')?.focus();");
+                    js.ExecuteScript("window.scrollTo(0, document.getElementById('canvas').offsetTop - 100);");
+                    Thread.Sleep(1000);
                 }
+                catch { }
+
+                Logger.Log($"Initiating automated reservation for {request.Quantity} seats...");
+                // SeatEngine.Reserve(driver, target, request.Quantity);
+
+                // 2. Call the Engine
+                SeatEngine.Reserve(driver, target.Section, request.Quantity);
+
+                Logger.Log("SUCCESS: Seats added to cart. Proceeding to checkout...");
             }
             else
             {
-                Logger.Log("❌ Failed to capture enclosure list.");
-            }
-
-            // 5. Handle any team selection popups if they exist
-            BookingService.ConfirmTeamSelection(driver);
-
-            request.Quantity = ConsoleInterface.GetSeatCount();
-
-            Logger.Log("Waiting for user to click a section on the stadium map...");
-
-            bool popupFound = false;
-            for (int i = 0; i < 60; i++)
-            {
-                var popups = driver.FindElements(By.Id("ga-popup"));
-                if (popups.Count > 0 && popups[0].Displayed)
-                {
-                    popupFound = true;
-                    break;
-                }
-                Thread.Sleep(1000);
-            }
-
-            if (popupFound)
-            {
-                PopupEngine.HandleQuantityPopup(driver, request.Quantity);
-                Logger.Log("🎉 Seat selection sequence completed.");
-            }
-            else
-            {
-                Logger.Log("❌ Timeout: Stadium map popup did not appear.");
+                Logger.Log($"❌ Section '{input}' was not found. Please check the spelling (e.g., S7 vs s7).");
             }
         }
         catch (Exception ex)
@@ -118,7 +79,7 @@ class Program
             Logger.Log($"Critical Failure: {ex.Message}");
         }
 
-        Console.WriteLine("\n[System] Process finished. Browser will remain open.");
+        Console.WriteLine("\n[System] Process finished. Browser will remain open for inspection.");
         while (true) Thread.Sleep(10000);
     }
 }
