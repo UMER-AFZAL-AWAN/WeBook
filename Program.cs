@@ -46,32 +46,23 @@ class Program
             var target = availableSeats.FirstOrDefault(s =>
                 s.Section.Equals(input, StringComparison.OrdinalIgnoreCase));
 
+            // Inside your Main method in Program.cs
             if (target != null)
             {
                 Logger.Log($"🎯 Target Match: {target.Section} Found. Price: {target.Price} SAR.");
 
-                // 1. Force focus out of the list and onto the stadium
-                // Close the sidebar to prepare for clicking the map
-                try
+                // Call the Engine and capture the true/false result
+                bool isReserved = SeatEngine.Reserve(driver, target.Section, request.Quantity);
+
+                if (isReserved)
                 {
-                    IJavaScriptExecutor js = (IJavaScriptExecutor)driver;
-                    js.ExecuteScript("document.querySelector('canvas')?.focus();");
-                    js.ExecuteScript("window.scrollTo(0, document.getElementById('canvas').offsetTop - 100);");
-                    Thread.Sleep(1000);
+                    Logger.Log("✅ SUCCESS: Seats added to cart. Proceeding to checkout...");
                 }
-                catch { }
-
-                Logger.Log($"Initiating automated reservation for {request.Quantity} seats...");
-                // SeatEngine.Reserve(driver, target, request.Quantity);
-
-                // 2. Call the Engine
-                SeatEngine.Reserve(driver, target.Section, request.Quantity);
-
-                Logger.Log("SUCCESS: Seats added to cart. Proceeding to checkout...");
-            }
-            else
-            {
-                Logger.Log($"❌ Section '{input}' was not found. Please check the spelling (e.g., S7 vs s7).");
+                else
+                {
+                    // This will trigger if the Canvas wasn't found or the popup didn't appear
+                    Logger.Log("❌ Reservation failed: Could not interact with the stadium map.");
+                }
             }
         }
         catch (Exception ex)
