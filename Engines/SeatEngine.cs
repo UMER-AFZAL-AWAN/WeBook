@@ -22,7 +22,7 @@ namespace WeBook.Engines
 
             Logger.Log($"Initiating automated reservation for {quantity} seats in {sectionLabel}...");
 
-            // --- STEP 1: COLLAPSE SIDEBAR ---
+            // --- STEP 1: INITIAL SIDEBAR COLLAPSE ---
             try
             {
                 var categoryTab = driver.FindElements(By.CssSelector("button[class*='z-50']")).FirstOrDefault();
@@ -35,62 +35,73 @@ namespace WeBook.Engines
             }
             catch { }
 
-            // --- STEP 2: ACTIVE SECURITY SOLVER & MAP SYNC ---
+            // --- STEP 2: PERSISTENT SECURITY SOLVER & MAP SYNC ---
             bool mapFound = false;
             Logger.Log("Monitoring security clearance. Hunting for blockers...");
 
-            for (int i = 1; i <= 15; i++)
+            // 25 attempts (~100 seconds) to ensure the map has time to load after security
+            for (int i = 1; i <= 25; i++)
             {
                 // 1. Check for the SeatCloud iframe (The Goal)
                 var mapFrames = driver.FindElements(By.CssSelector("iframe[id*='seat-cloud'], iframe[src*='seatcloud']"));
                 if (mapFrames.Count > 0 && mapFrames[0].Displayed)
                 {
-                    Logger.Log("✅ Map detected! Proceeding to reservation...");
+                    Logger.Log("✅ Map detected! Waiting 2s for internal rendering...");
+                    Thread.Sleep(2000); // Give the canvas time to draw
                     mapFound = true;
                     break;
                 }
 
-                // 2. Check for Cloudflare Turnstile (The Blocker)
+                // 2. Handle Cloudflare Blocker
                 var cfFrames = driver.FindElements(By.CssSelector("iframe[title*='Cloudflare'], iframe[src*='turnstile']"));
                 if (cfFrames.Count > 0)
                 {
-                    Logger.Log($"⚠️ Cloudflare detected (Attempt {i}). Attempting manual bypass...");
                     try
                     {
                         driver.SwitchTo().Frame(cfFrames[0]);
-                        // Target the checkbox specifically
                         var checkbox = driver.FindElements(By.CssSelector("input[type='checkbox'], #challenge-stage, .cb-i")).FirstOrDefault();
-                        if (checkbox != null)
+                        if (checkbox != null && checkbox.Displayed)
                         {
+                            Logger.Log($"🖱️ Security check visible (Attempt {i}). Clicking...");
                             js.ExecuteScript("arguments[0].click();", checkbox);
-                            Logger.Log("🖱️ Security checkbox clicked.");
                         }
                         driver.SwitchTo().DefaultContent();
                     }
                     catch { driver.SwitchTo().DefaultContent(); }
                 }
-
-                // 3. Heartbeat: Nudge and Ensure Sidebar is closed
-                if (i % 3 == 0)
+                else
                 {
-                    Logger.Log("Nudging page and checking sidebar state...");
-                    // Ensure sidebar didn't pop back up
+                    // If no security box is found but map is still missing, nudge the browser
+                    if (i % 5 == 0)
+                    {
+                        Logger.Log("No security box seen, but map missing. Nudging browser...");
+                        js.ExecuteScript("window.scrollBy(0, 10);");
+                        js.ExecuteScript("window.scrollBy(0, -10);");
+                        // Safe-zone click on the far right
+                        try { action.MoveToLocation(driver.Manage().Window.Size.Width - 50, 300).Click().Build().Perform(); } catch { }
+                    }
+                }
+
+                // 3. Keep sidebar closed to prevent overlapping the map
+                if (i % 4 == 0)
+                {
                     var sectionList = driver.FindElements(By.CssSelector("div[class*='overflow-y-auto']")).FirstOrDefault();
                     if (sectionList != null && sectionList.Displayed)
                     {
                         var categoryTab = driver.FindElements(By.CssSelector("button[class*='z-50']")).FirstOrDefault();
                         if (categoryTab != null) js.ExecuteScript("arguments[0].click();", categoryTab);
                     }
-                    js.ExecuteScript("window.scrollTo(0, 150);");
-                    // Click far right side to avoid sidebar
-                    try { action.MoveToLocation(driver.Manage().Window.Size.Width - 50, 300).Click().Build().Perform(); } catch { }
                 }
 
-                Logger.Log($"Waiting... (Attempt {i}/15)");
+                Logger.Log($"Waiting for map... ({i}/25)");
                 Thread.Sleep(4000);
             }
 
-            if (!mapFound) return false;
+            if (!mapFound)
+            {
+                Logger.Log("❌ Final Timeout: The map didn't load in time.");
+                return false;
+            }
 
             // --- STEP 3: INTERACT WITH MAP ---
             try
@@ -106,10 +117,10 @@ namespace WeBook.Engines
                     js.ExecuteScript("arguments[0].scrollIntoView({block: 'center'});", canvas);
                     Thread.Sleep(2000);
 
-                    // Double-click to focus and select
+                    // Click map to trigger popup
                     action.MoveToElement(canvas).Click().Click().Build().Perform();
 
-                    Logger.Log("✅ Map clicked. Waiting for quantity popup to stabilize...");
+                    Logger.Log("✅ Map clicked. Waiting for quantity popup...");
                     Thread.Sleep(4000);
 
                     // --- STEP 4: QUANTITY & CHECKOUT ---
