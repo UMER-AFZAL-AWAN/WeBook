@@ -8,7 +8,10 @@ namespace WeBook.Models
 {
     public static class Config
     {
-        public const string EMAIL = "cabnipcar@bangban.uk";
-        public const string PASSWORD = "Aa@123456789";
+        // System-wide settings
+        public const string BaseUrl = "https://webook.com/en";
+        public const int DefaultTimeout = 45;
+        public const bool HeadlessMode = false; // Set to true to run without a visible window
+        public const string BrowserType = "Chrome";
     }
 }

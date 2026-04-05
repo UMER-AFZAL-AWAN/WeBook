@@ -6,7 +6,9 @@ using System.Threading.Tasks;
 
 namespace WeBook.Models
 {
-    internal class UserCredentials
+    public class UserCredentials
     {
+        public string Email { get; set; } = "cabnipcar@bangban.uk";
+        public string Password { get; set; } = "Aa@123456789";
     }
 }

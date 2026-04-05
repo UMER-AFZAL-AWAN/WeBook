@@ -1,76 +1,84 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Threading;
 using OpenQA.Selenium;
-using OpenQA.Selenium.Support.UI;
 using WeBook.Core;
-using WeBook.Engines;
-using WeBook.Models;
 using WeBook.Services;
-using WeBook.UI;
 using WeBook.Utilities;
+using WeBook.Models;
+using WeBook.Engines;
+using WeBook.UI;
 
 class Program
 {
     static void Main()
     {
-        var request = new SeatRequest();
+        // 1. SETUP: Initialize user data and credentials
+        var request = ConsoleTerminal.InitializeRequest();
+        var myCredentials = new UserCredentials();
 
-        request.TargetUrl = ConsoleInterface.GetUrl() ?? string.Empty;
-        request.Quantity = ConsoleInterface.GetSeatCount();
+        // Validate URL input before launching browser
+        if (string.IsNullOrEmpty(request.TargetUrl))
+        {
+            Logger.Log("❌ Error: No URL provided. Closing...");
+            return;
+        }
 
+        // 2. BROWSER START: Initialize the Selenium Driver
         IWebDriver driver = DriverFactory.Create();
-        WebDriverWait wait = new WebDriverWait(driver, TimeSpan.FromSeconds(45));
 
         try
         {
+            // 3. NAVIGATION: Load the event page once
             Navigator.GoToEvent(driver, request.TargetUrl);
-            BookingService.HandleCookieBanner(driver);
-            AuthService.Login(driver, wait);
-            AuthService.SolveCloudflare(driver);
 
+            // 4. OBSTACLES: Handle cookie banners to ensure the UI is interactable
+            BookingEngine.HandleCookieBanner(driver);
+
+            // 5. LOGIN: Execute credentials injection and wait for map verification
+            // This instance call handles the "SendKeys" logic and redirect verification.
+            var auth = new AuthenticationService();
+            auth.LoginAndSolve(driver, myCredentials);
+
+            // 6. SCRAPE & COUNT: Discover available sections (A1, G4, etc.)
+            // We ensure the 'Enclosure' tab is open before scanning the HTML.
             Logger.Log("Waiting for stadium map elements...");
-            wait.Until(d => d.FindElements(By.CssSelector("button[class*='z-50']")).Count > 0);
-
-            // 4. SCAN - The new service handles the "12-item" bottleneck automatically
             DiscoveryService.EnsureEnclosureTabOpen(driver);
-            var availableSeats = DiscoveryService.GetAllEnclosures(driver);
 
-            Logger.Log($"✅ Discovery complete. {availableSeats.Count} total sections mapped across all categories.");
+            var availableSections = DiscoveryService.ScanAvailableSections(driver);
+            Logger.Log($"✅ Found {availableSections.Count} available sections.");
 
-            // 5. USER SELECTION
-            Console.Write("\n?? Enter Section Label (e.g., S7, B3, G12): ");
-            string input = Console.ReadLine()?.Trim() ?? string.Empty;
+            // 7. USER SELECTION: Presents the user with a numbered list of section labels
+            // This displays options like [0] A1, [1] B3, etc.
+            var selectedSection = ConsoleTerminal.UserPickSection(availableSections);
 
-            var target = availableSeats.FirstOrDefault(s =>
-                s.Section.Equals(input, StringComparison.OrdinalIgnoreCase));
-
-            // Inside your Main method in Program.cs
-            if (target != null)
+            if (selectedSection != null)
             {
-                Logger.Log($"🎯 Target Match: {target.Section} Found. Price: {target.Price} SAR.");
+                // 8. PRICE REVEAL: Display the specific price for the user's choice
+                Logger.Log($"🎯 You selected {selectedSection.Section}. Price is {selectedSection.Price} SAR.");
 
-                // Call the Engine and capture the true/false result
-                bool isReserved = SeatEngine.Reserve(driver, target.Section, request.Quantity);
+                // 9. MAP SEARCH: Switch to the map view to locate and click the selected section
+                Logger.Log($"🔍 Locating {selectedSection.Section} on the stadium map...");
+                bool mapSuccess = MapInteractionEngine.SelectSectionOnMap(driver, selectedSection);
 
-                if (isReserved)
+                // 10. RESERVATION: Select specific seats and proceed to checkout
+                if (mapSuccess)
                 {
-                    Logger.Log("✅ SUCCESS: Seats added to cart. Proceeding to checkout...");
+                    BookingEngine.FinalizeReservation(driver, request.Quantity);
                 }
                 else
                 {
-                    // This will trigger if the Canvas wasn't found or the popup didn't appear
-                    Logger.Log("❌ Reservation failed: Could not interact with the stadium map.");
+                    Logger.Log("❌ Failed: Could not find the section on the map.");
                 }
             }
         }
         catch (Exception ex)
         {
-            Logger.Log($"Critical Failure: {ex.Message}");
+            // Catch-all for automation errors (e.g., timeout, element not found)
+            Logger.Log($"Critical Error: {ex.Message}");
         }
-
-        Console.WriteLine("\n[System] Process finished. Browser will remain open for inspection.");
-        while (true) Thread.Sleep(10000);
+        finally
+        {
+            // Ensures the terminal stays open to view logs
+            ConsoleTerminal.KeepAlive();
+        }
     }
 }

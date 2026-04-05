@@ -11,91 +11,58 @@ namespace WeBook.Services
 {
     public static class DiscoveryService
     {
+        // This opens the sidebar so the HTML sections exist for the scraper
         public static void EnsureEnclosureTabOpen(IWebDriver driver)
         {
             var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
             try
             {
-                var toggleButton = wait.Until(SeleniumExtras.WaitHelpers.ExpectedConditions.ElementToBeClickable(
-                    By.CssSelector("button[class*='z-50'][class*='flex']")));
+                // Look for the toggle button (z-50 flex is common for this UI)
+                var toggleButton = driver.FindElements(By.CssSelector("button[class*='z-50']")).FirstOrDefault();
 
-                string isOpen = toggleButton.GetAttribute("data-open") ?? "false";
-                if (isOpen.ToLower() == "false")
+                if (toggleButton != null)
                 {
                     toggleButton.Click();
-                    Logger.Log("✅ Enclosure tab expanded.");
-                    Thread.Sleep(1000);
+                    Logger.Log("✅ Enclosure tab interaction triggered.");
+                    Thread.Sleep(2000); // Wait for animation
                 }
             }
             catch (Exception ex)
             {
-                Logger.Log("ℹ️ Enclosure tab check: " + ex.Message);
+                Logger.Log("ℹ️ Enclosure tab check skipped: " + ex.Message);
             }
         }
 
-        public static List<SeatRequest> GetAllEnclosures(IWebDriver driver)
+        public static List<SeatSelection> ScanAvailableSections(IWebDriver driver)
         {
-            var uniqueEnclosures = new Dictionary<string, SeatRequest>(StringComparer.OrdinalIgnoreCase);
-            IJavaScriptExecutor js = (IJavaScriptExecutor)driver;
-            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
+            var wait = new WebDriverWait(driver, TimeSpan.FromSeconds(15));
+            // Wait for the legend container to actually exist in the DOM
+            wait.Until(d => d.FindElements(By.Id("legend")).Count > 0);
 
-            try
+            var sections = new List<SeatSelection>();
+            var legendItems = driver.FindElements(By.CssSelector("#legend .legend-item"));
+
+            foreach (var item in legendItems)
             {
-                // Target the specific scroll container found in your HTML
-                var scrollContainer = wait.Until(d => d.FindElement(By.CssSelector("div.mini-scrollbar")));
+                string text = item.Text.Trim();
+                if (string.IsNullOrEmpty(text)) continue;
 
-                int previousCount = -1;
-                int stallCount = 0;
+                // FIX: Use double quotes for strings and char for single characters
+                // Use StringSplitOptions to handle potential empty entries
+                string sectionName = text.Split(new[] { "\n" }, StringSplitOptions.None)[0];
 
-                // Keep scrolling until no new sections are found for 5 consecutive attempts
-                while (stallCount < 5)
+                // FIX: 'SAR' is 3 characters, so it MUST be a string "SAR"
+                string pricePart = text.Contains("SAR")
+                    ? text.Split(new[] { "SAR" }, StringSplitOptions.None)[0].Trim()
+                    : "Unknown";
+
+                sections.Add(new SeatSelection
                 {
-                    // Select all list items (li) inside the scrollable area
-                    var listItems = scrollContainer.FindElements(By.CssSelector("li.py-2"));
-
-                    foreach (var li in listItems)
-                    {
-                        try
-                        {
-                            // Extract Label (e.g., S4, G1, B1)
-                            string label = li.FindElement(By.CssSelector("div.grow.text-sm p")).Text.Trim();
-
-                            // Extract Price (e.g., 3,753.57)
-                            string priceText = li.FindElement(By.CssSelector("span.text-body-M")).Text.Trim();
-
-                            if (!uniqueEnclosures.ContainsKey(label))
-                            {
-                                uniqueEnclosures.Add(label, new SeatRequest
-                                {
-                                    Section = label,
-                                    Price = priceText.Replace(",", "")
-                                });
-                            }
-                        }
-                        catch { continue; } // Item might be mid-render, skip to next
-                    }
-
-                    if (uniqueEnclosures.Count == previousCount)
-                    {
-                        stallCount++;
-                    }
-                    else
-                    {
-                        stallCount = 0;
-                        previousCount = uniqueEnclosures.Count;
-                    }
-
-                    // TRIGGER LAZY LOAD: Scroll down in 400px increments
-                    js.ExecuteScript("arguments[0].scrollBy(0, 400);", scrollContainer);
-                    Thread.Sleep(800); // Wait for the 'Cat' headers and items to load
-                }
+                    Section = sectionName,
+                    Price = pricePart
+                });
             }
-            catch (Exception ex)
-            {
-                Logger.Log("⚠️ Discovery Error: " + ex.Message);
-            }
-
-            return uniqueEnclosures.Values.ToList();
+            return sections;
         }
     }
 }

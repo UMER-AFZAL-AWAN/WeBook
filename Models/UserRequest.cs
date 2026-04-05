@@ -6,11 +6,10 @@ using System.Threading.Tasks;
 
 namespace WeBook.Models
 {
-    public class SeatRequest
+    public class UserRequest
     {
         public string TargetUrl { get; set; } = string.Empty;
-        public string Section { get; set; } = string.Empty;
-        public string Price { get; set; } = string.Empty;
         public int Quantity { get; set; }
+        public string SelectedTeam { get; set; } = string.Empty;
     }
 }
