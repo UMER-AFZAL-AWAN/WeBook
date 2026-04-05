@@ -70,91 +70,91 @@ namespace WeBookAutomation
                 Console.Write("Require consecutive seats? (y/n): ");
                 bool requireConsecutive = Console.ReadLine().ToLower() == "y";
 
-                // --- Click the category (on main page) ---
-                Console.WriteLine($"Clicking category: {selectedCategory.Name}");
-                UIActions.ClickCategory(driver, selectedCategory);
-                Thread.Sleep(2000); // wait for iframe to start loading
+                //// --- Click the category (on main page) ---
+                //Console.WriteLine($"Clicking category: {selectedCategory.Name}");
+                //UIActions.ClickCategory(driver, selectedCategory);
+                //Thread.Sleep(2000); // wait for iframe to start loading
 
-                // --- Find and switch to the map iframe ---
-                var mapIframe = UIActions.FindMapIframe(driver);
-                if (mapIframe == null) { Console.WriteLine("❌ Map iframe not found."); return; }
-                driver.SwitchTo().Frame(mapIframe);
-                Console.WriteLine("✅ Switched to map iframe.");
+                //// --- Find and switch to the map iframe ---
+                //var mapIframe = UIActions.FindMapIframe(driver);
+                //if (mapIframe == null) { Console.WriteLine("❌ Map iframe not found."); return; }
+                //driver.SwitchTo().Frame(mapIframe);
+                //Console.WriteLine("✅ Switched to map iframe.");
 
-                // Wait for canvas to exist and have size
-                var canvasWait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
-                canvasWait.Until(d =>
-                {
-                    var canvas = d.FindElement(By.TagName("canvas"));
-                    return canvas != null && canvas.Size.Width > 0 && canvas.Size.Height > 0;
-                });
-                Console.WriteLine("Canvas found and has size.");
+                //// Wait for canvas to exist and have size
+                //var canvasWait = new WebDriverWait(driver, TimeSpan.FromSeconds(10));
+                //canvasWait.Until(d =>
+                //{
+                //    var canvas = d.FindElement(By.TagName("canvas"));
+                //    return canvas != null && canvas.Size.Width > 0 && canvas.Size.Height > 0;
+                //});
+                //Console.WriteLine("Canvas found and has size.");
 
-                // Wait for canvas to update after category click
-                var beforeColor = UIActions.GetCanvasCenterColor(driver);
-                UIActions.WaitForCanvasUpdate(driver, beforeColor);
-                Console.WriteLine("Canvas updated.");
+                //// Wait for canvas to update after category click
+                //var beforeColor = UIActions.GetCanvasCenterColor(driver);
+                //UIActions.WaitForCanvasUpdate(driver, beforeColor);
+                //Console.WriteLine("Canvas updated.");
 
-                // Get the actual colour of the seats/GA area
-                var actualColor = UIActions.GetActualCategoryColor(driver);
-                if (actualColor == null) { Console.WriteLine("Could not determine seat color."); return; }
-                Console.WriteLine($"Actual color: ({actualColor[0]}, {actualColor[1]}, {actualColor[2]})");
+                //// Get the actual colour of the seats/GA area
+                //var actualColor = UIActions.GetActualCategoryColor(driver);
+                //if (actualColor == null) { Console.WriteLine("Could not determine seat color."); return; }
+                //Console.WriteLine($"Actual color: ({actualColor[0]}, {actualColor[1]}, {actualColor[2]})");
 
-                // Extract seats using that colour
-                var layout = CanvasAnalyzer.ExtractSeats(driver, actualColor[0], actualColor[1], actualColor[2],
-                                                         DEFAULT_TOLERANCE, CLUSTER_DISTANCE);
+                //// Extract seats using that colour
+                //var layout = CanvasAnalyzer.ExtractSeats(driver, actualColor[0], actualColor[1], actualColor[2],
+                //                                         DEFAULT_TOLERANCE, CLUSTER_DISTANCE);
 
-                // If no seats found -> GA zone
-                if (layout == null || layout.AllSeats.Count == 0)
-                {
-                    Console.WriteLine("No individual seats found – assuming GA zone.");
-                    // Click on a GA area to open the popup
-                    UIActions.ClickCanvasAtColor(driver, actualColor, DEFAULT_TOLERANCE);
-                    Thread.Sleep(1000); // allow popup to appear
+                //// If no seats found -> GA zone
+                //if (layout == null || layout.AllSeats.Count == 0)
+                //{
+                //    Console.WriteLine("No individual seats found – assuming GA zone.");
+                //    // Click on a GA area to open the popup
+                //    UIActions.ClickCanvasAtColor(driver, actualColor, DEFAULT_TOLERANCE);
+                //    Thread.Sleep(1000); // allow popup to appear
 
-                    // Switch back to main page to handle the popup
-                    driver.SwitchTo().DefaultContent();
-                    if (UIActions.IsGAPopupPresent(driver))
-                    {
-                        UIActions.HandleGAPopup(driver, seatCount);
-                        UIActions.ClickCheckout(driver);
-                        Console.WriteLine("GA seats selected. Checkout initiated.");
-                        while (true) Thread.Sleep(10000);
-                    }
-                    else
-                    {
-                        Console.WriteLine("GA popup did not appear.");
-                        return;
-                    }
-                }
+                //    // Switch back to main page to handle the popup
+                //    driver.SwitchTo().DefaultContent();
+                //    if (UIActions.IsGAPopupPresent(driver))
+                //    {
+                //        UIActions.HandleGAPopup(driver, seatCount);
+                //        UIActions.ClickCheckout(driver);
+                //        Console.WriteLine("GA seats selected. Checkout initiated.");
+                //        while (true) Thread.Sleep(10000);
+                //    }
+                //    else
+                //    {
+                //        Console.WriteLine("GA popup did not appear.");
+                //        return;
+                //    }
+                //}
 
-                // --- Individual seats selection ---
-                Console.WriteLine($"Found {layout.AllSeats.Count} seats.");
+                //// --- Individual seats selection ---
+                //Console.WriteLine($"Found {layout.AllSeats.Count} seats.");
 
-                List<Seat> selectedSeats = null;
-                if (requireConsecutive)
-                {
-                    selectedSeats = SeatSelector.FindConsecutiveSeats(layout, seatCount);
-                    if (selectedSeats == null)
-                    {
-                        Console.WriteLine($"⚠️ No block of {seatCount} consecutive seats found.");
-                        Console.Write("Continue with non-consecutive selection? (y/n): ");
-                        if (Console.ReadLine().ToLower() != "y") return;
-                        requireConsecutive = false;
-                    }
-                }
-                if (!requireConsecutive && selectedSeats == null)
-                    selectedSeats = SeatSelector.TakeFirstNSeats(layout.AllSeats, seatCount);
+                //List<Seat> selectedSeats = null;
+                //if (requireConsecutive)
+                //{
+                //    selectedSeats = SeatSelector.FindConsecutiveSeats(layout, seatCount);
+                //    if (selectedSeats == null)
+                //    {
+                //        Console.WriteLine($"⚠️ No block of {seatCount} consecutive seats found.");
+                //        Console.Write("Continue with non-consecutive selection? (y/n): ");
+                //        if (Console.ReadLine().ToLower() != "y") return;
+                //        requireConsecutive = false;
+                //    }
+                //}
+                //if (!requireConsecutive && selectedSeats == null)
+                //    selectedSeats = SeatSelector.TakeFirstNSeats(layout.AllSeats, seatCount);
 
-                if (selectedSeats == null || selectedSeats.Count < seatCount)
-                {
-                    Console.WriteLine($"❌ Not enough seats. Found {layout.AllSeats.Count}, requested {seatCount}.");
-                    return;
-                }
+                //if (selectedSeats == null || selectedSeats.Count < seatCount)
+                //{
+                //    Console.WriteLine($"❌ Not enough seats. Found {layout.AllSeats.Count}, requested {seatCount}.");
+                //    return;
+                //}
 
-                Console.WriteLine($"🎯 Selecting {selectedSeats.Count} seats...");
-                foreach (var seat in selectedSeats)
-                    UIActions.ClickSeat(driver, seat);
+                //Console.WriteLine($"🎯 Selecting {selectedSeats.Count} seats...");
+                //foreach (var seat in selectedSeats)
+                //    UIActions.ClickSeat(driver, seat);
 
                 UIActions.ClickCheckout(driver);
                 Console.WriteLine("🎉 SUCCESS: Seats selected and checkout initiated!");
